@@ -604,8 +604,10 @@ function build() {
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(cv), blending:THREE.AdditiveBlending, depthWrite:false, transparent:true }));
   halo.position.copy(T); halo.scale.setScalar(2.4); scene.add(halo);
 
-  // веер прогноза на 7 дней: две полосы и пунктир середины; раскрывается от точки «сегодня»
+  // веер прогноза на 7 дней: нити выходят из точки «сегодня», каждая — свой уровень прогноза
+  // (от нижней границы 80% до верхней, середина ярче); под ними едва заметные полосы
   const fan = new THREE.Group(); fan.position.copy(T); scene.add(fan);
+  const bands = [];
   const band = (a, b, op) => {
     const v = [];
     for (let d = 0; d < 7; d++) {
@@ -615,13 +617,20 @@ function build() {
       v.push(x0, l0, 0, x1, l1, 0, x1, h1, 0, x0, l0, 0, x1, h1, 0, x0, h0, 0);
     }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    fan.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color:0x2997ff, transparent:true, opacity:op, side:THREE.DoubleSide, depthWrite:false, blending:THREE.AdditiveBlending })));
+    const m = new THREE.MeshBasicMaterial({ color:0x2997ff, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false, blending:THREE.AdditiveBlending });
+    fan.add(new THREE.Mesh(g, m)); bands.push([m, op]);
   };
-  band(0, 4, .16); band(1, 3, .3);
-  const med = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), ...D.fan.map((q, d) => new THREE.Vector3((d + 1) * fanStep, Y(q[2]) - T.y, 0))]);
-  const medL = new THREE.Line(med, new THREE.LineDashedMaterial({ color:0x2997ff, dashSize:.25, gapSize:.18, transparent:true, opacity:.9 }));
-  medL.computeLineDistances(); fan.add(medL);
-  fan.scale.x = .001;
+  band(0, 4, .07); band(1, 3, .1);
+  const NT = 17, TSEG = 60, threads = [];
+  for (let i = 0; i < NT; i++) {
+    const lv = i / (NT - 1) * 4, j = Math.min(3, Math.floor(lv)), f = lv - j;
+    const pts = [new THREE.Vector3(0, 0, 0), ...D.fan.map((q, d) => new THREE.Vector3((d + 1) * fanStep, Y(q[j] + (q[j + 1] - q[j]) * f) - T.y, 0))];
+    const g = new THREE.BufferGeometry().setFromPoints(new THREE.CatmullRomCurve3(pts).getPoints(TSEG));
+    const near = 1 - Math.abs(lv - 2) / 2;
+    g.setDrawRange(0, 0);
+    fan.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color:near > .95 ? 0xffffff : 0x2997ff, transparent:true, opacity:.25 + .65 * near, blending:THREE.AdditiveBlending, depthWrite:false })));
+    threads.push([g, (1 - near) * .25]);   // середина выходит первой, крайние чуть позже
+  }
 
   /* камера просто подлетает к сегодняшней точке: угол и точка, куда она смотрит, не меняются, меняется только расстояние.
      История уходит вглубь, впереди место для веера */
@@ -670,7 +679,9 @@ function build() {
     const near = shown > .995;
     dot.visible = halo.visible = near;
     halo.scale.setScalar(2.2 + Math.sin(now / 600) * .25);
-    fan.scale.x = Math.max(.001, smooth((t - .6) / .2));
+    const ft = (t - .58) / .24;
+    for (const [g, lag] of threads) g.setDrawRange(0, Math.round(smooth((ft - lag) / .75) * (TSEG + 1)));
+    for (const [m, op] of bands) m.opacity = op * smooth((ft - .5) / .5);
 
     caps.forEach(c => { const w = c.b - c.a, o = +((c.a === 0 ? 1 : smooth((t - c.a) / (w * .25))) * (1 - smooth((t - (c.b - w * .25)) / (w * .25)))).toFixed(2);
       if (o !== c.o) { c.o = o; c.el.style.opacity = o; c.el.style.transform = 'translate3d(0,' + ((1 - o) * 12).toFixed(1) + 'px,0)'; } });
