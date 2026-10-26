@@ -609,32 +609,56 @@ function build() {
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(cv), blending:THREE.AdditiveBlending, depthWrite:false, transparent:true }));
   halo.position.copy(T); halo.scale.setScalar(2.4); scene.add(halo);
 
-  // веер прогноза на 7 дней: нити выходят из точки «сегодня», каждая — свой уровень прогноза
-  // (от нижней границы 80% до верхней, середина ярче); под ними едва заметные полосы
+  // веер прогноза: нити выходят из точки «сегодня», каждая — свой уровень прогноза (от нижней границы 80% до верхней,
+  // середина ярче). Первые 7 дней — цифры модели, дальше разброс растёт как корень из времени, чтобы нити уходили за край экрана.
+  // Нити слегка вьются: колебание растёт от точки к краю и медленно плывёт во времени
   const fan = new THREE.Group(); fan.position.copy(T); scene.add(fan);
+  const DMAX = 26, p0 = D.pts.at(-1);
+  const level = (q, lv) => { const j = Math.min(3, Math.floor(lv)), f = lv - j; return q[j] + (q[j + 1] - q[j]) * f; };
+  const lvAt = (d, lv) => {   // цена уровня lv (0…4) на день d
+    if (d <= 0) return p0;
+    if (d <= 7) { const i = Math.ceil(d) - 1, f = d - i, a = i ? level(D.fan[i - 1], lv) : p0; return a + (level(D.fan[i], lv) - a) * f; }
+    const m = D.fan[6][2]; return m + (level(D.fan[6], lv) - m) * Math.sqrt(d / 7);
+  };
+  const ly = (d, lv) => Y(lvAt(d, lv)) - T.y;
   const bands = [];
   const band = (a, b, op) => {
-    const v = [];
-    for (let d = 0; d < 7; d++) {
-      const x0 = d * fanStep, x1 = (d + 1) * fanStep;
-      const l0 = d ? Y(D.fan[d - 1][a]) - T.y : 0, h0 = d ? Y(D.fan[d - 1][b]) - T.y : 0;
-      const l1 = Y(D.fan[d][a]) - T.y, h1 = Y(D.fan[d][b]) - T.y;
+    const v = [], K = 40;
+    for (let k = 0; k < K; k++) {
+      const d0 = k / K * DMAX, d1 = (k + 1) / K * DMAX, x0 = d0 * fanStep, x1 = d1 * fanStep;
+      const l0 = ly(d0, a), h0 = ly(d0, b), l1 = ly(d1, a), h1 = ly(d1, b);
       v.push(x0, l0, 0, x1, l1, 0, x1, h1, 0, x0, l0, 0, x1, h1, 0, x0, h0, 0);
     }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
     const m = new THREE.MeshBasicMaterial({ color:0x2997ff, transparent:true, opacity:0, side:THREE.DoubleSide, depthWrite:false, blending:THREE.AdditiveBlending });
     fan.add(new THREE.Mesh(g, m)); bands.push([m, op]);
   };
-  band(0, 4, .07); band(1, 3, .1);
-  const NT = 17, TSEG = 60, threads = [];
+  band(0, 4, .06); band(1, 3, .08);
+  const NT = 17, TSEG = 160, threads = [];
   for (let i = 0; i < NT; i++) {
-    const lv = i / (NT - 1) * 4, j = Math.min(3, Math.floor(lv)), f = lv - j;
-    const pts = [new THREE.Vector3(0, 0, 0), ...D.fan.map((q, d) => new THREE.Vector3((d + 1) * fanStep, Y(q[j] + (q[j + 1] - q[j]) * f) - T.y, 0))];
-    const g = new THREE.BufferGeometry().setFromPoints(new THREE.CatmullRomCurve3(pts).getPoints(TSEG));
-    const near = 1 - Math.abs(lv - 2) / 2;
+    const lv = i / (NT - 1) * 4, near = 1 - Math.abs(lv - 2) / 2;
+    const base = new Float32Array((TSEG + 1) * 3), wid = new Float32Array(TSEG + 1);
+    for (let k = 0; k <= TSEG; k++) {
+      const d = k / TSEG * DMAX;
+      base[k * 3] = d * fanStep; base[k * 3 + 1] = ly(d, lv);
+      wid[k] = ly(d, 4) - ly(d, 0);   // ширина веера здесь — от неё размах завитков
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(base.slice(), 3));
     g.setDrawRange(0, 0);
     fan.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color:near > .95 ? 0xffffff : 0x2997ff, transparent:true, opacity:.25 + .65 * near, blending:THREE.AdditiveBlending, depthWrite:false })));
-    threads.push([g, (1 - near) * .25]);   // середина выходит первой, крайние чуть позже
+    threads.push({ g, base, wid, lag:(1 - near) * .25, ph:i * 2.39 });   // середина выходит первой, крайние чуть позже
+  }
+  function curl(time) {
+    for (const { g, base, wid, ph } of threads) {
+      const a = g.attributes.position.array;
+      for (let k = 0; k <= TSEG; k++) {
+        const u = k / TSEG, x = base[k * 3], env = Math.min(1, u * 4) * (.05 + .07 * u) * wid[k];
+        const w = Math.sin(x * 1.3 + ph + time * .7) + .45 * Math.sin(x * 3.1 - ph * 1.7 + time * 1.1);
+        a[k * 3 + 1] = base[k * 3 + 1] + env * w;
+        a[k * 3 + 2] = env * 1.4 * Math.cos(x * 1.1 + ph * 1.3 + time * .6);
+      }
+      g.attributes.position.needsUpdate = true;
+    }
   }
 
   /* камера просто подлетает к сегодняшней точке: угол и точка, куда она смотрит, не меняются, меняется только расстояние.
@@ -685,7 +709,8 @@ function build() {
     dot.visible = halo.visible = near;
     halo.scale.setScalar(2.2 + Math.sin(now / 600) * .25);
     const ft = (t - .58) / .24;
-    for (const [g, lag] of threads) g.setDrawRange(0, Math.round(smooth((ft - lag) / .75) * (TSEG + 1)));
+    for (const { g, lag } of threads) g.setDrawRange(0, Math.round(smooth((ft - lag) / .75) * (TSEG + 1)));
+    if (ft > 0) curl(now / 1000);
     for (const [m, op] of bands) m.opacity = op * smooth((ft - .5) / .5);
 
     caps.forEach(c => { const w = c.b - c.a, o = +((c.a === 0 ? 1 : smooth((t - c.a) / (w * .25))) * (1 - smooth((t - (c.b - w * .25)) / (w * .25)))).toFixed(2);
