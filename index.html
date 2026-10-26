@@ -22,8 +22,8 @@
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue","Segoe UI",Roboto,Arial,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%;overflow-x:hidden}
-main,footer{overflow-x:clip;max-width:100%}
+html{-webkit-text-size-adjust:100%}
+.clipx{overflow-x:hidden;overflow-x:clip}   /* только блок с веером экранов: сдвиг вбок шёл от него, а overflow у html/main ломает прилипание сцены в Safari */
 body{background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.47;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 a{color:inherit}
 img{display:block;max-width:100%}
@@ -327,13 +327,13 @@ window.__flightData = Promise.all(['/v1/market/chart?symbol=BTC&period=1y', '/v1
   <section class="ask"><div class="wrap"><h2 class="words">Что тогда есть в приложении?</h2></div></section>
   <section class="reply">
     <div class="wrap">
-      <div class="fan" id="fan" aria-label="Экраны приложения">
+      <div class="clipx"><div class="fan" id="fan" aria-label="Экраны приложения">
         <figure class="shot far" style="--i:-2;--a:2"><div class="img"><img src="img/home.jpg" alt="Главная" loading="lazy"></div><figcaption class="cap">Главная</figcaption></figure>
         <figure class="shot" style="--i:-1;--a:1"><div class="img"><img src="img/market.jpg" alt="Рынок: диапазон цены на неделю" loading="lazy"></div><figcaption class="cap">Рынок</figcaption></figure>
         <figure class="shot" style="--i:0;--a:0"><div class="img"><img src="img/sum.jpg" alt="Расчёт на неделю" loading="lazy"></div><figcaption class="cap">Расчёт</figcaption></figure>
         <figure class="shot" style="--i:1;--a:1"><div class="img"><img src="img/news.jpg" alt="Новости" loading="lazy"></div><figcaption class="cap">Новости</figcaption></figure>
         <figure class="shot far" style="--i:2;--a:2"><div class="img"><img src="img/journal.jpg" alt="Журнал решений" loading="lazy"></div><figcaption class="cap">Журнал</figcaption></figure>
-      </div>
+      </div></div>
       <ul class="inside">
         <li class="rv"><b>Расчёт</b>Сумма под ваш лимит на эту неделю и то, как она получилась.</li>
         <li class="rv" style="--d:1"><b>Рынок</b>Диапазон цены через неделю, вероятности движения больше 5%, индекс страха.</li>
@@ -621,34 +621,25 @@ function build() {
   medL.computeLineDistances(); fan.add(medL);
   fan.scale.x = .001;
 
-  /* путь камеры: ключевые точки по прогрессу, между ними — сглаженная кривая без остановок */
-  const keys = () => {
-    const fx = T.x + 7 * fanStep;
-    if (camera.aspect < 1) return [   // телефон: график уходит в перспективу по диагонали — помещается в узкий экран
-      { t:0,   p:[-L * .72, H * 1.25, 15],          l:[L * .12, H * .35, 0] },
-      { t:.24, p:[-L * .52, yAt(.08) + 3, 10],      l:[-L * .3, yAt(.18), 0] },
-      { t:.48, p:[-L * .1, yAt(.45) + 3.4, 10.5],   l:[L * .08, yAt(.56), 0] },
-      { t:.66, p:[T.x - 7, T.y + 3, 10],            l:[T.x, T.y, 0] },
-      { t:.84, p:[T.x - 4.5, T.y + 1.6, 6],         l:[fx, T.y, 0] },
-      { t:1,   p:[T.x - 2.5, T.y + 2, 14],          l:[T.x + 3.5 * fanStep, T.y, 0] },
-    ];
-    return [
-      { t:0,   p:[-L * .02, H * 1.9, L * .95],      l:[0, H * .45, 0] },
-      { t:.24, p:[-L * .56, yAt(.06) + 3.2, 11.5],  l:[-L * .34, yAt(.16), 0] },
-      { t:.48, p:[-L * .1, yAt(.45) + 3.6, 11],     l:[L * .06, yAt(.56), 0] },
-      { t:.66, p:[T.x - 8, T.y + 3, 9.5],           l:[T.x, T.y, 0] },
-      { t:.84, p:[T.x - 5, T.y + 1.6, 5],           l:[fx, T.y, 0] },
-      { t:1,   p:[T.x - 3.2, T.y + 2.2, 12.5],      l:[T.x + 3.5 * fanStep, T.y, 0] },
-    ];
-  };
-  let K, posC, lookC;
-  const path = () => { K = keys(); posC = new THREE.CatmullRomCurve3(K.map(k => new THREE.Vector3(...k.p))); lookC = new THREE.CatmullRomCurve3(K.map(k => new THREE.Vector3(...k.l))); };
-  const param = t => { let i = 0; while (i < K.length - 2 && t > K[i + 1].t) i++; return (i + clamp((t - K[i].t) / (K[i + 1].t - K[i].t))) / (K.length - 1); };
+  /* камера облетает точку на линии по дуге: цель скользит вдоль графика, камера вращается вокруг неё,
+     поэтому график всегда в кадре. s — где цель (0…1 — линия, больше 1 — уходит в веер), az/el — поворот и наклон, r — расстояние */
+  const KT = [0, .2, .45, .66, .84, 1];
+  const KS = [.5, .12, .55, 1, 1.2, 1.12], KAZ = [-28, -58, 32, -40, -66, -12], KEL = [30, 22, 14, 16, 15, 18];
+  const KR = () => camera.aspect < 1 ? [L * 1.05, 14, 12, 10.5, 10, 15] : [L * .78, 11, 10, 9, 8.5, 12.5];
+  const at = (arr, t) => { let i = 0; while (i < KT.length - 2 && t > KT[i + 1]) i++; const u = smooth((t - KT[i]) / (KT[i + 1] - KT[i])); return arr[i] + (arr[i + 1] - arr[i]) * u; };
+  const fanEnd = new THREE.Vector3(T.x + 7 * fanStep, T.y, 0);
+  const aim = (sv, out) => sv <= 1 ? curve.getPoint(clamp(sv), out) : out.copy(T).lerp(fanEnd, (sv - 1) / .25);
+  const D2R = Math.PI / 180;
+  function cam(t, pos, look) {
+    aim(at(KS, t), look);
+    const az = at(KAZ, t) * D2R, el = at(KEL, t) * D2R, r = at(KR(), t);
+    pos.set(look.x + r * Math.sin(az) * Math.cos(el), look.y + r * Math.sin(el), look.z + r * Math.cos(az) * Math.cos(el));
+  }
 
   function resize() {
     const w = canvas.clientWidth, hh = canvas.clientHeight;
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(w, hh, false);
-    camera.aspect = w / hh; camera.fov = camera.aspect < 1 ? 64 : 45; camera.updateProjectionMatrix(); path();
+    camera.aspect = w / hh; camera.fov = camera.aspect < 1 ? 64 : 45; camera.updateProjectionMatrix();
   }
   resize(); addEventListener('resize', resize);
 
@@ -664,8 +655,8 @@ function build() {
     target = fixed ? +fixed : reduce ? 1 : progress();
     cur += (target - cur) * (1 - Math.exp(-dt * 7));   // камера мягко догоняет прокрутку
     if (started) draw = Math.min(1, draw + dt * .45);    // после заставки линия года прорисовывается сама, за ~2 с
-    const t = cur, u = param(t);
-    camera.position.copy(posC.getPoint(u)); lookC.getPoint(u, look); camera.lookAt(look);
+    const t = cur;
+    cam(t, camera.position, look); camera.lookAt(look);
     const dist = camera.position.distanceTo(look); scene.fog.near = dist * .7; scene.fog.far = dist * 2.6;   // туман — от расстояния до цели
 
     const shown = Math.max(smooth(draw), smooth(t / .5));   // доля прорисованной линии
