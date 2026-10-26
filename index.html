@@ -82,7 +82,7 @@ img{display:block;max-width:100%}
 .qwrap .after{opacity:0;transform:translateY(14px);transition:opacity .7s var(--spring) .45s,transform .7s var(--spring) .45s}
 .qwrap.on h1 .w,.qwrap.on .after{opacity:1;transform:none}
 .picks{display:grid;grid-template-columns:repeat(4,auto);gap:12px;margin:44px auto 0;justify-content:center}
-.pick{height:58px;padding:0 28px;border-radius:999px;border:1px solid #3a3a3d;background:rgba(0,0,0,.35);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);color:var(--fg);font:inherit;font-size:19px;font-weight:600;cursor:pointer;transition:background .2s,border-color .2s,color .2s,transform .12s var(--ease)}
+.pick{height:58px;padding:0 28px;border-radius:999px;border:1px solid #3a3a3d;background:rgba(20,20,22,.7);color:var(--fg);font:inherit;font-size:19px;font-weight:600;cursor:pointer;transition:background .2s,border-color .2s,color .2s,transform .12s var(--ease)}
 .pick:active{transform:scale(.96)}
 .pick[aria-pressed="true"]{background:var(--fg);color:#000;border-color:var(--fg)}
 @media (hover:hover){.pick:not([aria-pressed="true"]):hover{border-color:#5a5a5f}}
@@ -398,7 +398,9 @@ window.__flightData = Promise.all(['/v1/market/chart?symbol=BTC&period=1y', '/v1
 
   /* меню становится стеклянным после первого экрана */
   const nav = $('nav');
-  const onNav = () => nav.classList.toggle('solid', scrollY > 24);
+  /* стекло меню — только после пролёта: размытие поверх 3D-сцены, которая перерисовывается каждый кадр, тормозит Safari */
+  const flightEl = document.getElementById('flight');
+  const onNav = () => nav.classList.toggle('solid', flightEl ? flightEl.getBoundingClientRect().bottom < 60 : scrollY > 24);
 
   /* последние известные цифры модели — сервер обновит их при открытии */
   const M = { bad:.098, price:80154, lo:75381, hi:85980, down:.13, up:.17, pool:3854, fan:null, closes:null };
@@ -626,7 +628,14 @@ function build() {
   const KT = [0, .2, .45, .66, .84, 1];
   const KS = [.5, .12, .55, 1, 1.2, 1.12], KAZ = [-28, -58, 32, -40, -66, -12], KEL = [30, 22, 14, 16, 15, 18];
   const KR = () => camera.aspect < 1 ? [L * 1.05, 14, 12, 10.5, 10, 15] : [L * .78, 11, 10, 9, 8.5, 12.5];
-  const at = (arr, t) => { let i = 0; while (i < KT.length - 2 && t > KT[i + 1]) i++; const u = smooth((t - KT[i]) / (KT[i + 1] - KT[i])); return arr[i] + (arr[i + 1] - arr[i]) * u; };
+  /* значение параметра на прогрессе t — гладкая кривая через ключи (скорость не падает до нуля на каждом ключе) */
+  const at = (arr, t) => {
+    t = clamp(t); let i = 0; while (i < KT.length - 2 && t > KT[i + 1]) i++;
+    const t0 = KT[i], t1 = KT[i + 1], h = t1 - t0, u = (t - t0) / h;
+    const tan = j => j <= 0 || j >= KT.length - 1 ? 0 : (arr[j + 1] - arr[j - 1]) / (KT[j + 1] - KT[j - 1]);
+    const m0 = tan(i) * h, m1 = tan(i + 1) * h, u2 = u * u, u3 = u2 * u;
+    return (2 * u3 - 3 * u2 + 1) * arr[i] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * arr[i + 1] + (u3 - u2) * m1;
+  };
   const fanEnd = new THREE.Vector3(T.x + 7 * fanStep, T.y, 0);
   const aim = (sv, out) => sv <= 1 ? curve.getPoint(clamp(sv), out) : out.copy(T).lerp(fanEnd, (sv - 1) / .25);
   const D2R = Math.PI / 180;
@@ -636,9 +645,12 @@ function build() {
     pos.set(look.x + r * Math.sin(az) * Math.cos(el), look.y + r * Math.sin(el), look.z + r * Math.cos(az) * Math.cos(el));
   }
 
+  let sw = 0, sh = 0;
   function resize() {
     const w = canvas.clientWidth, hh = canvas.clientHeight;
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(w, hh, false);
+    if (w === sw && Math.abs(hh - sh) < 160) return;   // строка адреса Safari прячется/появляется — холст не пересоздаём
+    sw = w; sh = hh;
+    renderer.setPixelRatio(Math.min(devicePixelRatio, w < 700 ? 1.5 : 2)); renderer.setSize(w, hh, false);
     camera.aspect = w / hh; camera.fov = camera.aspect < 1 ? 64 : 45; camera.updateProjectionMatrix();
   }
   resize(); addEventListener('resize', resize);
@@ -647,13 +659,15 @@ function build() {
   /* ?p=0.5 — сразу нужная точка пролёта, без прокрутки и заставки (для проверки и превью) */
   const fixed = new URLSearchParams(location.search).get('p');
   let target = 0, cur = fixed ? +fixed : 0, draw = reduce || fixed ? 1 : 0, last = performance.now();
-  const progress = () => { const r = flight.getBoundingClientRect(), span = r.height - innerHeight; return span > 0 ? clamp(-r.top / span) : 1; };
+  const stageEl = canvas.parentElement;   // высота сцены — 100svh, не меняется вместе со строкой адреса
+  const progress = () => { const r = flight.getBoundingClientRect(), span = r.height - stageEl.clientHeight; return span > 0 ? clamp(-r.top / span) : 1; };
   const started = true;   // линия начинает рисоваться сразу, пока ещё идёт заставка
   const look = new THREE.Vector3();
   function frame(now) {
     const dt = Math.min(.1, (now - last) / 1000); last = now;
     target = fixed ? +fixed : reduce ? 1 : progress();
-    cur += (target - cur) * (1 - Math.exp(-dt * 7));   // камера мягко догоняет прокрутку
+    cur += (target - cur) * (1 - Math.exp(-dt * 6));   // камера мягко догоняет прокрутку
+    if (Math.abs(target - cur) < 1e-4) cur = target;
     if (started) draw = Math.min(1, draw + dt * .45);    // после заставки линия года прорисовывается сама, за ~2 с
     const t = cur;
     cam(t, camera.position, look); camera.lookAt(look);
@@ -668,10 +682,10 @@ function build() {
     halo.scale.setScalar(2.2 + Math.sin(now / 600) * .25);
     fan.scale.x = Math.max(.001, smooth((t - .6) / .2));
 
-    caps.forEach(c => { const w = c.b - c.a, o = (c.a === 0 ? 1 : smooth((t - c.a) / (w * .25))) * (1 - smooth((t - (c.b - w * .25)) / (w * .25)));
-      c.el.style.opacity = o.toFixed(3); c.el.style.transform = 'translateY(' + ((1 - o) * 12).toFixed(1) + 'px)'; });
-    veil.style.opacity = (smooth((t - .84) / .1) * .93).toFixed(3);
-    cue.style.opacity = t < .03 && started ? 1 : 0;
+    caps.forEach(c => { const w = c.b - c.a, o = +((c.a === 0 ? 1 : smooth((t - c.a) / (w * .25))) * (1 - smooth((t - (c.b - w * .25)) / (w * .25)))).toFixed(2);
+      if (o !== c.o) { c.o = o; c.el.style.opacity = o; c.el.style.transform = 'translate3d(0,' + ((1 - o) * 12).toFixed(1) + 'px,0)'; } });
+    const vo = +(smooth((t - .84) / .1) * .93).toFixed(2); if (vo !== veil.o) { veil.o = vo; veil.style.opacity = vo; }
+    const co = t < .03 && started ? 1 : 0; if (co !== cue.o) { cue.o = co; cue.style.opacity = co; }
     qwrap.classList.toggle('on', reduce || t > .88);
 
     const r = flight.getBoundingClientRect();
