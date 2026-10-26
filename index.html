@@ -623,25 +623,17 @@ function build() {
   medL.computeLineDistances(); fan.add(medL);
   fan.scale.x = .001;
 
-  /* камера облетает точку на линии по дуге: цель скользит вдоль графика, камера вращается вокруг неё,
-     поэтому график всегда в кадре. s — где цель (0…1 — линия, больше 1 — уходит в веер), az/el — поворот и наклон, r — расстояние */
-  const KT = [0, .2, .45, .66, .84, 1];
-  const KS = [.5, .12, .55, 1, 1.2, 1.12], KAZ = [-28, -58, 32, -40, -66, -12], KEL = [30, 22, 14, 16, 15, 18];
-  const KR = () => camera.aspect < 1 ? [L * 1.05, 14, 12, 10.5, 10, 15] : [L * .78, 11, 10, 9, 8.5, 12.5];
-  /* значение параметра на прогрессе t — гладкая кривая через ключи (скорость не падает до нуля на каждом ключе) */
-  const at = (arr, t) => {
-    t = clamp(t); let i = 0; while (i < KT.length - 2 && t > KT[i + 1]) i++;
-    const t0 = KT[i], t1 = KT[i + 1], h = t1 - t0, u = (t - t0) / h;
-    const tan = j => j <= 0 || j >= KT.length - 1 ? 0 : (arr[j + 1] - arr[j - 1]) / (KT[j + 1] - KT[j - 1]);
-    const m0 = tan(i) * h, m1 = tan(i + 1) * h, u2 = u * u, u3 = u2 * u;
-    return (2 * u3 - 3 * u2 + 1) * arr[i] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * arr[i + 1] + (u3 - u2) * m1;
-  };
+  /* камера одним плавным движением: от общего вида на весь год к сегодняшней точке и вееру.
+     s — куда смотрит камера (0…1 — линия, больше 1 — уходит в веер), az/el — поворот и наклон, r — расстояние */
+  const ease = t => (t = clamp(t), t * t * (3 - 2 * t));
+  const mix = (a, b, t) => a + (b - a) * t;
   const fanEnd = new THREE.Vector3(T.x + 7 * fanStep, T.y, 0);
   const aim = (sv, out) => sv <= 1 ? curve.getPoint(clamp(sv), out) : out.copy(T).lerp(fanEnd, (sv - 1) / .25);
   const D2R = Math.PI / 180;
   function cam(t, pos, look) {
-    aim(at(KS, t), look);
-    const az = at(KAZ, t) * D2R, el = at(KEL, t) * D2R, r = at(KR(), t);
+    const e = ease(t), tall = camera.aspect < 1;
+    aim(mix(.5, 1.12, e), look);
+    const az = mix(-34, -12, e) * D2R, el = mix(28, 17, e) * D2R, r = mix(L * (tall ? 1.05 : .78), tall ? 15 : 12.5, e);
     pos.set(look.x + r * Math.sin(az) * Math.cos(el), look.y + r * Math.sin(el), look.z + r * Math.cos(az) * Math.cos(el));
   }
 
