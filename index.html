@@ -623,18 +623,16 @@ function build() {
   medL.computeLineDistances(); fan.add(medL);
   fan.scale.x = .001;
 
-  /* камера одним плавным движением: от общего вида на весь год к сегодняшней точке и вееру.
-     s — куда смотрит камера (0…1 — линия, больше 1 — уходит в веер), az/el — поворот и наклон, r — расстояние */
+  /* камера просто подлетает к сегодняшней точке: угол и точка, куда она смотрит, не меняются, меняется только расстояние.
+     История уходит вглубь, впереди место для веера */
   const ease = t => (t = clamp(t), t * t * (3 - 2 * t));
-  const mix = (a, b, t) => a + (b - a) * t;
-  const fanEnd = new THREE.Vector3(T.x + 7 * fanStep, T.y, 0);
-  const aim = (sv, out) => sv <= 1 ? curve.getPoint(clamp(sv), out) : out.copy(T).lerp(fanEnd, (sv - 1) / .25);
-  const D2R = Math.PI / 180;
+  const look0 = new THREE.Vector3(T.x + 2.5 * fanStep, T.y, 0);
+  const AZ = 40 * Math.PI / 180, EL = 18 * Math.PI / 180;
   function cam(t, pos, look) {
-    const e = ease(t), tall = camera.aspect < 1;
-    aim(mix(.5, 1.12, e), look);
-    const az = mix(-34, -12, e) * D2R, el = mix(28, 17, e) * D2R, r = mix(L * (tall ? 1.05 : .78), tall ? 15 : 12.5, e);
-    pos.set(look.x + r * Math.sin(az) * Math.cos(el), look.y + r * Math.sin(el), look.z + r * Math.cos(az) * Math.cos(el));
+    const tall = camera.aspect < 1, r0 = L * (tall ? 1.1 : .85), r1 = tall ? 14 : 11.5;
+    const r = r0 + (r1 - r0) * ease(t / .85);
+    look.copy(look0);
+    pos.set(look.x + r * Math.sin(AZ) * Math.cos(EL), look.y + r * Math.sin(EL), look.z + r * Math.cos(AZ) * Math.cos(EL));
   }
 
   let sw = 0, sh = 0;
