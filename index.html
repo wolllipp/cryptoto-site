@@ -10,6 +10,8 @@
 <meta property="og:description" content="Диапазон цены на неделю, сумма в пределах вашего лимита, журнал решений. Модель проверена на истории с 2019 года.">
 <meta property="og:image" content="https://cryptoto.site/img/market.jpg">
 <meta property="og:url" content="https://cryptoto.site/">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" crossorigin>
+<link rel="preconnect" href="https://api.cryptoto.site:8444" crossorigin>
 <link rel="icon" href="img/icon.png">
 <link rel="apple-touch-icon" href="img/icon.png">
 <style>
@@ -219,13 +221,18 @@ footer p{max-width:640px}
   <button class="skip" type="button" id="skip">Пропустить</button>
 </div>
 <script>
+/* данные для пролёта — сразу, параллельно с заставкой */
+window.__flightData = Promise.all(['/v1/market/chart?symbol=BTC&period=1y', '/v1/forecast/latest'].map(u => fetch('https://api.cryptoto.site:8444' + u).then(r => r.json()))).catch(() => null);
 (() => {
   const el = document.getElementById('intro');
   let seen = false; try { seen = sessionStorage.getItem('ca-intro') === '1'; sessionStorage.setItem('ca-intro', '1'); } catch {}
   if (seen || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.remove(); return; }
   el.hidden = false; document.documentElement.style.overflow = 'hidden';
   const done = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out'); document.documentElement.style.overflow = ''; window.__introDone = true; window.dispatchEvent(new Event('intro-done')); setTimeout(() => el.remove(), 700); };
-  setTimeout(done, 3450);
+  let timeUp = false;
+  setTimeout(() => { timeUp = true; if (window.__sceneReady) done(); }, 3450);
+  window.addEventListener('scene-ready', () => { if (timeUp) done(); });
+  setTimeout(done, 7000);   // сцена не загрузилась — всё равно показываем страницу
   el.addEventListener('click', done);
 })();
 </script>
@@ -242,7 +249,7 @@ footer p{max-width:640px}
   <section class="flight" id="flight" aria-label="Биткоин за год и неделя вперёд">
     <div class="stage">
       <canvas id="gl" aria-hidden="true"></canvas>
-      <div class="cap2" data-a="0" data-b=".2"><div class="k">Биткоин за год</div><div class="v">Каждая точка на линии — цена закрытия дня</div></div>
+      <div class="cap2" data-a="0" data-b=".2"><div class="k">Биткоин за год</div><div class="v">Каждая точка на линии: цена закрытия дня</div></div>
       <div class="cap2" data-a=".24" data-b=".46"><div class="k" id="capAgoK">год назад</div><div class="v num" id="capAgo">$114 108</div></div>
       <div class="cap2" data-a=".5" data-b=".66"><div class="k">сегодня</div><div class="v num" id="capNow">$80 519</div></div>
       <div class="cap2" data-a=".7" data-b=".84"><div class="k">через неделю, в 8 случаях из 10</div><div class="v num" id="capFan">$75 381 – 85 980</div></div>
@@ -526,6 +533,7 @@ const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v)), smooth = t => { 
 let renderer;
 try { renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:'high-performance' }); } catch { renderer = null; }
 if (!renderer || reduce) {   // без 3D или без движения: сразу вопрос на одном экране
+  window.__sceneReady = true; dispatchEvent(new Event('scene-ready'));
   flight.style.height = '100svh'; qwrap.classList.add('on'); cue.style.opacity = 0;
   if (!renderer) canvas.remove();
 }
@@ -533,7 +541,7 @@ if (!renderer || reduce) {   // без 3D или без движения: сра
 /* данные: год закрытий и веер; без сети — правдоподобная заглушка, чтобы сцена не пустовала */
 async function data() {
   try {
-    const [c, f] = await Promise.all([fetch(API + '/v1/market/chart?symbol=BTC&period=1y').then(r => r.json()), fetch(API + '/v1/forecast/latest').then(r => r.json())]);
+    const [c, f] = (await window.__flightData) || await Promise.all([fetch(API + '/v1/market/chart?symbol=BTC&period=1y').then(r => r.json()), fetch(API + '/v1/forecast/latest').then(r => r.json())]);
     if (c.points?.length > 30 && f.forecast?.fan) return { pts:c.points.map(p => p.c), fan:Array.from({ length:7 }, (_, d) => f.forecast.fan[String(d + 1)]), lo:f.forecast.range80.lo, hi:f.forecast.range80.hi };
   } catch {}
   let v = 100000; const pts = Array.from({ length:365 }, (_, i) => (v *= 1 + Math.sin(i / 23) * .004 + (Math.random() - .5) * .03));
@@ -649,8 +657,7 @@ function build() {
   const fixed = new URLSearchParams(location.search).get('p');
   let target = 0, cur = fixed ? +fixed : 0, draw = reduce || fixed ? 1 : 0, last = performance.now();
   const progress = () => { const r = flight.getBoundingClientRect(), span = r.height - innerHeight; return span > 0 ? clamp(-r.top / span) : 1; };
-  let started = !document.getElementById('intro') || !!window.__introDone;
-  addEventListener('intro-done', () => { started = true; });
+  const started = true;   // линия начинает рисоваться сразу, пока ещё идёт заставка
   const look = new THREE.Vector3();
   function frame(now) {
     const dt = Math.min(.1, (now - last) / 1000); last = now;
@@ -670,7 +677,7 @@ function build() {
     halo.scale.setScalar(2.2 + Math.sin(now / 600) * .25);
     fan.scale.x = Math.max(.001, smooth((t - .6) / .2));
 
-    caps.forEach(c => { const w = c.b - c.a, o = smooth((t - c.a) / (w * .25)) * (1 - smooth((t - (c.b - w * .25)) / (w * .25)));
+    caps.forEach(c => { const w = c.b - c.a, o = (c.a === 0 ? 1 : smooth((t - c.a) / (w * .25))) * (1 - smooth((t - (c.b - w * .25)) / (w * .25)));
       c.el.style.opacity = o.toFixed(3); c.el.style.transform = 'translateY(' + ((1 - o) * 12).toFixed(1) + 'px)'; });
     veil.style.opacity = (smooth((t - .84) / .1) * .93).toFixed(3);
     cue.style.opacity = t < .03 && started ? 1 : 0;
@@ -678,6 +685,7 @@ function build() {
 
     const r = flight.getBoundingClientRect();
     if (r.bottom > 0 && r.top < innerHeight) renderer.render(scene, camera);
+    if (!window.__sceneReady) { window.__sceneReady = true; dispatchEvent(new Event('scene-ready')); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
