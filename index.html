@@ -20,7 +20,8 @@
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue","Segoe UI",Roboto,Arial,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;overflow-x:hidden}
+main,footer{overflow-x:clip;max-width:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--font);line-height:1.47;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 a{color:inherit}
 img{display:block;max-width:100%}
@@ -102,9 +103,9 @@ img{display:block;max-width:100%}
 .statement .w{opacity:.14;transition:opacity .2s linear}
 
 /* веер экранов (--p от 0 до 1 задаёт скрипт) */
-.fan{--w:min(230px,24vw);--p:0;position:relative;height:calc(var(--w) * 2.17 + 110px);margin:50px auto 0}
+.fan{--w:min(230px,24vw);--sx:1.04;--p:0;position:relative;height:calc(var(--w) * 2.17 + 110px);margin:50px auto 0}
 .shot{position:absolute;left:50%;top:0;width:var(--w);margin-left:calc(var(--w) / -2);aspect-ratio:390/844;will-change:transform;
-  transform:translateX(calc(var(--i) * var(--p) * var(--w) * 1.04)) translateY(calc(var(--a) * var(--p) * 28px + (1 - var(--p)) * var(--a) * 10px)) rotate(calc(var(--i) * var(--p) * 4deg)) scale(calc(1 - var(--a) * .05));
+  transform:translateX(calc(var(--i) * var(--p) * var(--w) * var(--sx))) translateY(calc(var(--a) * var(--p) * 28px + (1 - var(--p)) * var(--a) * 10px)) rotate(calc(var(--i) * var(--p) * 4deg)) scale(calc(1 - var(--a) * .05));
   z-index:calc(10 - var(--a))}
 .shot .img{position:absolute;inset:0;border-radius:calc(var(--w) * .13);overflow:hidden;background:#000;box-shadow:0 0 0 1px #2a2a2e,0 30px 60px -24px rgba(0,0,0,.95)}
 .shot img{width:100%;height:100%;object-fit:cover;object-position:top}
@@ -158,8 +159,11 @@ footer p{max-width:640px}
   .chart{aspect-ratio:4/3;margin-top:36px}
   .row{grid-template-columns:1fr;gap:6px;padding:20px 0}
   .verdict{justify-self:start;margin-top:4px}
-  .fan{--w:min(190px,44vw)}
-  .shot.far{display:none}
+  .fan{--w:min(180px,42vw);--sx:.7;padding-top:calc(var(--w) * 1.2);height:calc(var(--w) * 3.37 + 110px)}
+  .shot{top:calc(var(--w) * 1.2)}
+  /* крайние экраны — за центральными и выше: колода из пяти */
+  .shot.far{transform:translateX(calc(var(--i) * var(--p) * var(--w) * .21)) translateY(calc(var(--p) * var(--w) * -1.2)) rotate(calc(var(--i) * var(--p) * 2deg)) scale(.86)}
+  .shot.far .cap{top:auto;bottom:calc(100% + 10px)}
   .inside li{grid-template-columns:1fr;gap:4px}
   .join{flex-direction:column;border-radius:22px;padding:8px}
   .join input{height:46px}
