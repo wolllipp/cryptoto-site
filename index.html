@@ -10,7 +10,7 @@
 <meta property="og:description" content="Диапазон цены на неделю, сумма в пределах вашего лимита, журнал решений. Модель проверена на истории с 2019 года.">
 <meta property="og:image" content="https://cryptoto.site/img/market.jpg">
 <meta property="og:url" content="https://cryptoto.site/">
-<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" crossorigin>
+<link rel="modulepreload" href="vendor/three.module.min.js">
 <link rel="preconnect" href="https://api.cryptoto.site:8444" crossorigin>
 <link rel="icon" href="img/icon.png">
 <link rel="apple-touch-icon" href="img/icon.png">
@@ -227,8 +227,12 @@ window.__flightData = Promise.all(['/v1/market/chart?symbol=BTC&period=1y', '/v1
   const el = document.getElementById('intro');
   let seen = false; try { seen = sessionStorage.getItem('ca-intro') === '1'; sessionStorage.setItem('ca-intro', '1'); } catch {}
   if (seen || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.remove(); return; }
-  el.hidden = false; document.documentElement.style.overflow = 'hidden';
-  const done = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out'); document.documentElement.style.overflow = ''; window.__introDone = true; window.dispatchEvent(new Event('intro-done')); setTimeout(() => el.remove(), 700); };
+  el.hidden = false;
+  /* прокрутку на время заставки держим событиями, а не overflow у html: после overflow Safari ломает прилипание сцены, и график стоит до перезагрузки */
+  const hold = e => e.preventDefault(), keys = e => { if (/^(Arrow|Page|Home|End| )/.test(e.key)) e.preventDefault(); };
+  addEventListener('wheel', hold, { passive:false }); addEventListener('touchmove', hold, { passive:false }); addEventListener('keydown', keys);
+  const done = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out');
+    removeEventListener('wheel', hold); removeEventListener('touchmove', hold); removeEventListener('keydown', keys); window.__introDone = true; window.dispatchEvent(new Event('intro-done')); setTimeout(() => el.remove(), 700); };
   let timeUp = false;
   setTimeout(() => { timeUp = true; if (window.__sceneReady) done(); }, 3450);
   window.addEventListener('scene-ready', () => { if (timeUp) done(); });
@@ -523,7 +527,7 @@ window.__flightData = Promise.all(['/v1/market/chart?symbol=BTC&period=1y', '/v1
 <script type="module">
 /* Пролёт над графиком: Three.js, настоящие закрытия BTC за год и веер модели на 7 дней.
    Прокрутка задаёт прогресс 0…1, камера мягко догоняет его по сглаженному пути (Catmull-Rom). */
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import * as THREE from './vendor/three.module.min.js';   // своя копия: CDN при первом заходе иногда зависал, и пролёт не запускался
 const API = 'https://api.cryptoto.site:8444';
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = id => document.getElementById(id);
@@ -543,7 +547,8 @@ if (!renderer || reduce) {   // без 3D или без движения: сра
 /* данные: год закрытий и веер; без сети — правдоподобная заглушка, чтобы сцена не пустовала */
 async function data() {
   try {
-    const [c, f] = (await window.__flightData) || await Promise.all([fetch(API + '/v1/market/chart?symbol=BTC&period=1y').then(r => r.json()), fetch(API + '/v1/forecast/latest').then(r => r.json())]);
+    const within = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);   // зависший запрос не держит сцену
+    const [c, f] = (await within(window.__flightData, 6000)) || await within(Promise.all([fetch(API + '/v1/market/chart?symbol=BTC&period=1y').then(r => r.json()), fetch(API + '/v1/forecast/latest').then(r => r.json())]), 5000) || [];
     if (c.points?.length > 30 && f.forecast?.fan) return { pts:c.points.map(p => p.c), fan:Array.from({ length:7 }, (_, d) => f.forecast.fan[String(d + 1)]), lo:f.forecast.range80.lo, hi:f.forecast.range80.hi };
   } catch {}
   let v = 100000; const pts = Array.from({ length:365 }, (_, i) => (v *= 1 + Math.sin(i / 23) * .004 + (Math.random() - .5) * .03));
