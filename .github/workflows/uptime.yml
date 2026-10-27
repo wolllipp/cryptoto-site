@@ -1,0 +1,24 @@
+# Сторож снаружи (этап 2.6, docs/runbook.md): сервер, который упал целиком, сам о себе не сообщит.
+# Раз в ~15 минут GitHub спрашивает API; нет ответа или база не отвечает — сообщение в Telegram тем же ботом, что на сервере.
+# Испорченные данные (degraded) сервер сообщает сам (ca-health) — здесь только «сервер недоступен».
+name: API uptime
+on:
+  schedule: [{ cron: "*/15 * * * *" }]
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: /v1/health answers
+        env:
+          TG_TOKEN: ${{ secrets.CA_TG_TOKEN }}
+          TG_CHAT: ${{ secrets.CA_TG_CHAT }}
+        run: |
+          body=$(curl -s -m 20 --retry 2 --retry-delay 15 --retry-all-errors https://api.cryptoto.site:8444/v1/health || true)
+          echo "$body"
+          if ! echo "$body" | grep -q '"database":"ok"'; then
+            curl -s -m 20 "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" --data-urlencode "chat_id=${TG_CHAT}" \
+              --data-urlencode "text=❌ Crypto Analytics: сервер не отвечает снаружи (проверка GitHub). Ответ: ${body:-нет ответа}" >/dev/null
+            exit 1
+          fi
